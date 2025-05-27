@@ -9,5 +9,8 @@ name = "pltrs"
 crate-type = ["cdylib"]
 
 [dependencies]
+env_logger = "0.11.8"
+pollster = "0.4.0"
 pyo3 = "0.24.0"
 wgpu = "25.0.2"
+winit = { version = "0.30.11", features = ["wayland", "x11"] }
