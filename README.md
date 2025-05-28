@@ -10,3 +10,34 @@ This project aims to provide a plotting library that offers improved performance
 
 *   Leverages Rust and `wgpu` for accelerated rendering.
 *   (Add a couple more key features you plan to implement, e.g., "Intuitive API for plot creation," "Support for various plot types like line, scatter, and bar charts," etc.
+
+## Installation
+
+**(Note: Installation instructions will be added once the package is ready for distribution, e.g., on PyPI.)**
+
+For now, you can explore the codebase by cloning the repository.
+
+```bash
+git clone https://github.com/OliverKKY/pltrs.git
+cd pltrs
+```
+
+## Usage
+
+To explore the basic functionality and witness the window creation, follow these steps:
+
+1.  **Build the Rust library and create the Python extension module** using `maturin`. Ensure you have `maturin` installed (`pip install maturin`). Run the following command in the project's root directory:
+
+    ```bash
+    maturin develop
+    ```
+
+    This command builds the Rust code and creates a Python wheel in your development environment, allowing you to import `pltrs` directly.
+
+2.  **Run the example Python script.** Navigate to the directory containing your `main.py` (if it's separate from the root) and execute the script:
+
+    ```bash
+    python main.py
+    ```
+
+    Executing `main.py` will call the `pltrs.show()` function, which should open a window displaying a green screen.
