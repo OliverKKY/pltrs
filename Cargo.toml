@@ -1,16 +1,7 @@
-[package]
-name = "pltrs"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-[lib]
-name = "pltrs"
-crate-type = ["cdylib"]
-
-[dependencies]
-env_logger = "0.11.8"
-pollster = "0.4.0"
-pyo3 = "0.24.0"
-wgpu = "25.0.2"
-winit = { version = "0.30.11", features = ["wayland", "x11"] }
+[workspace]
+resolver = "2"
+members = [
+  "crates/pltrs_core",
+  "crates/pltrs_backend_wgpu",
+  "crates/pltrs_python",
+]

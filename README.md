@@ -26,10 +26,10 @@ cd pltrs
 
 To explore the basic functionality and witness the window creation, follow these steps:
 
-1.  **Build the Rust library and create the Python extension module** using `maturin`. Ensure you have `maturin` installed (`pip install maturin`). Run the following command in the project's root directory:
+1.  **Build the Rust library and create the Python extension module** using `maturin --version`. Ensure you have `maturin` installed (`pip install maturin`). Run the following command in the project's root directory:
 
     ```bash
-    maturin develop
+    maturin develop -m crates/pltrs_python/Cargo.toml
     ```
 
     This command builds the Rust code and creates a Python wheel in your development environment, allowing you to import `pltrs` directly.
@@ -37,7 +37,7 @@ To explore the basic functionality and witness the window creation, follow these
 2.  **Run the example Python script.** Navigate to the directory containing your `main.py` (if it's separate from the root) and execute the script:
 
     ```bash
-    python main.py
+    python examples/python/line_plot.py
     ```
 
-    Executing `main.py` will call the `pltrs.show()` function, which should open a window displaying a green screen.
+    Executing `line_plot.py` will call the `pltrs.show()` function, which should open a window displaying a green screen.

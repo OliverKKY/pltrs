@@ -1,0 +1,17 @@
+[package]
+name = "pltrs_python"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "pltrs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27.1", features = ["extension-module"] }
+pltrs_core = { path = "../pltrs_core" }
+pltrs_backend_wgpu = { path = "../pltrs_backend_wgpu" }
+anyhow = "1"
+
+[package.metadata.maturin]
+name = "pltrs"
