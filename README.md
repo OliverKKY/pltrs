@@ -22,9 +22,9 @@ git clone https://github.com/OliverKKY/pltrs.git
 cd pltrs
 ```
 
-## Usage
+## Build
 
-To explore the basic functionality and witness the window creation, follow these steps:
+To explore the basic functionality and witness the window creation, follow these steps. But first make sure you have **Rust installed** and **virtual environment activated**.
 
 1.  **Build the Rust library and create the Python extension module** using `maturin --version`. Ensure you have `maturin` installed (`pip install maturin`). Run the following command in the project's root directory:
 
