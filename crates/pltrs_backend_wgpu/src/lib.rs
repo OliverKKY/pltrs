@@ -2,8 +2,9 @@ use pltrs_core::{Color, Figure, RenderBackend};
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
-    event::WindowEvent,
+    event::{KeyEvent, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+    keyboard::{KeyCode, PhysicalKey},
     window::{Window, WindowId},
 };
 
@@ -30,8 +31,13 @@ impl WgpuBackend {
 
         let size = window.inner_size();
         let surface = instance.create_surface(window.clone()).unwrap();
-        let cap = surface.get_capabilities(&adapter);
-        let surface_format = cap.formats[0];
+        let surface_caps = surface.get_capabilities(&adapter);
+        let surface_format = surface_caps
+            .formats
+            .iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
 
         let backend = Self {
             window,
@@ -59,7 +65,7 @@ impl WgpuBackend {
         self.surface.configure(&self.device, &surface_config);
     }
 
-    fn render_green(&mut self, color: Color) {
+    fn render(&mut self, color: Color) -> Result<(), wgpu::SurfaceError> {
         let surface_texture = self
             .surface
             .get_current_texture()
@@ -71,7 +77,9 @@ impl WgpuBackend {
                 ..Default::default()
             });
         let mut encoder = self.device.create_command_encoder(&Default::default());
+
         {
+            // genius usage of scopes here
             let _rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -92,15 +100,25 @@ impl WgpuBackend {
                 occlusion_query_set: None,
             });
         }
+
         self.queue.submit([encoder.finish()]);
         self.window.pre_present_notify();
         surface_texture.present();
+
+        Ok(())
+    }
+
+    fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
+        match (code, is_pressed) {
+            (KeyCode::Escape, true) => event_loop.exit(),
+            _ => {}
+        }
     }
 }
 
 impl RenderBackend for WgpuBackend {
     fn begin_frame(&mut self, clear: Color) {
-        self.render_green(clear);
+        self.render(clear).unwrap(); // I'm not sure about the unwrap used here, just for shutting up the compiler for now
     }
 
     fn draw_scene(&mut self, fig: &Figure) {
@@ -144,19 +162,31 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        let backend = self.backend.as_mut().unwrap();
+        let state = match &mut self.backend {
+            Some(canvas) => canvas,
+            None => return,
+        };
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
-                backend.begin_frame(self.clear);
+                state.begin_frame(self.clear);
                 if let Some(fig) = &self.figure {
-                    backend.draw_scene(fig);
+                    state.draw_scene(fig);
                 }
-                backend.end_frame();
+                state.end_frame();
             }
             WindowEvent::Resized(size) => {
-                backend.resize(size.width, size.height);
+                state.resize(size.width, size.height);
             }
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(code),
+                        state: key_state,
+                        ..
+                    },
+                ..
+            } => state.handle_key(event_loop, code, key_state.is_pressed()),
             _ => {}
         }
     }
