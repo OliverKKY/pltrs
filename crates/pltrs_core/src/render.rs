@@ -1,5 +1,6 @@
-use crate::scene::{Color, Figure, Node};
+use crate::scene::{Color, Figure, Marker, Node};
 
+/// Description of the render target (window or texture).
 pub struct RenderTargetDesc {
     pub width: u32,
     pub height: u32,
@@ -8,13 +9,19 @@ pub struct RenderTargetDesc {
 
 /// The `RenderBackend` trait is the contract that any rendering engine must follow.
 pub trait RenderBackend {
+    /// Start a new frame.
     fn begin_frame(&mut self, clear: Color);
+    /// Draw the scene.
     fn draw_scene(&mut self, fig: &Figure);
+    /// End the current frame and present it.
     fn end_frame(&mut self);
+    /// Resize the render surface.
     fn resize(&mut self, width: u32, height: u32);
 }
 
 /// --- Batching System ---
+
+/// A batch of lines to be rendered.
 #[derive(Debug)]
 pub struct LineBatch {
     pub vertices: Vec<[f32; 2]>,
@@ -22,13 +29,24 @@ pub struct LineBatch {
     pub width: f32,
 }
 
+/// A batch of markers (scatter plot points) to be rendered.
+#[derive(Debug)]
+pub struct MarkerBatch {
+    pub positions: Vec<[f32; 2]>,
+    pub color: Color,
+    pub size: f32,
+    pub marker: Marker,
+}
+
+/// Collection of renderable batches.
 #[derive(Debug, Default)]
 pub struct Batches {
     pub lines: Vec<LineBatch>,
-    // pub markers: Vec<MarkerBatch>, // TODO
+    pub markers: Vec<MarkerBatch>,
     // pub bars: Vec<BarBatch>,       // TODO
 }
 
+/// Build renderable batches from the Scene Graph.
 pub fn build_batches(fig: &Figure) -> Batches {
     let mut batches = Batches::default();
 
@@ -57,8 +75,24 @@ pub fn build_batches(fig: &Figure) -> Batches {
                         width: line.width,
                     });
                 }
-                Node::Scatter(_) => {
-                    // TODO
+                Node::Scatter(scatter) => {
+                    let mut positions = Vec::with_capacity(scatter.xs.len());
+                    for (&x, &y) in scatter.xs.iter().zip(&scatter.ys) {
+                        let x_norm_axes = axes.x.map(x) as f32;
+                        let y_norm_axes = axes.y.map(y) as f32;
+
+                        let x_norm_fig = axes_rect.x + axes_rect.w * x_norm_axes;
+                        let y_norm_fig = axes_rect.y + axes_rect.h * y_norm_axes;
+
+                        positions.push([x_norm_fig, y_norm_fig]);
+                    }
+
+                    batches.markers.push(MarkerBatch {
+                        positions,
+                        color: scatter.color,
+                        size: scatter.size,
+                        marker: scatter.marker,
+                    });
                 }
                 Node::Bar(_) => {
                     // TODO
