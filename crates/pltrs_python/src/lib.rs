@@ -1,8 +1,6 @@
-use std::{
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Mutex,
-    },
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Mutex,
 };
 
 use pltrs_backend_wgpu::run_with_figure;
@@ -198,8 +196,22 @@ mod tests {
     fn take_registered_figure_consumes_only_matching_entry() {
         let id_a = next_figure_id();
         let id_b = next_figure_id();
-        register_figure(id_a, Figure::new(Size { width: 1, height: 1, dpi: 1.0 }));
-        register_figure(id_b, Figure::new(Size { width: 2, height: 2, dpi: 1.0 }));
+        register_figure(
+            id_a,
+            Figure::new(Size {
+                width: 1,
+                height: 1,
+                dpi: 1.0,
+            }),
+        );
+        register_figure(
+            id_b,
+            Figure::new(Size {
+                width: 2,
+                height: 2,
+                dpi: 1.0,
+            }),
+        );
 
         let taken = take_registered_figure(id_a).unwrap();
         assert_eq!(taken.size.width, 1);

@@ -3,4 +3,12 @@ name = "pltrs-text"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+name = "pltrs_text"
+path = "src/lib.rs"
+
 [dependencies]
+anyhow = "1.0.100"
+pltrs_core = { path = "../pltrs_core" }
+wgpu = "0.20"
+wgpu_text = "0.8.8"

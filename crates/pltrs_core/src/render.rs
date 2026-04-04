@@ -38,11 +38,21 @@ pub struct MarkerBatch {
     pub marker: Marker,
 }
 
+/// A batch of text labels to be rendered.
+#[derive(Debug)]
+pub struct TextBatch {
+    pub content: String,
+    pub position: [f32; 2],
+    pub color: Color,
+    pub size: f32,
+}
+
 /// Collection of renderable batches.
 #[derive(Debug, Default)]
 pub struct Batches {
     pub lines: Vec<LineBatch>,
     pub markers: Vec<MarkerBatch>,
+    pub texts: Vec<TextBatch>,
     // pub bars: Vec<BarBatch>,       // TODO
 }
 
@@ -96,6 +106,20 @@ pub fn build_batches(fig: &Figure) -> Batches {
                 }
                 Node::Bar(_) => {
                     // TODO
+                }
+                Node::Text(text) => {
+                    let x_norm_axes = axes.x.map(text.x) as f32;
+                    let y_norm_axes = axes.y.map(text.y) as f32;
+
+                    let x_norm_fig = axes_rect.x + axes_rect.w * x_norm_axes;
+                    let y_norm_fig = axes_rect.y + axes_rect.h * y_norm_axes;
+
+                    batches.texts.push(TextBatch {
+                        content: text.content.clone(),
+                        position: [x_norm_fig, y_norm_fig],
+                        color: text.color,
+                        size: text.size,
+                    });
                 }
             }
         }

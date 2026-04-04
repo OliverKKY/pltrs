@@ -3,10 +3,10 @@ use pltrs_core::{Color, Figure, RenderBackend};
 use std::sync::Arc;
 use winit::{
     application::ApplicationHandler,
+    dpi::PhysicalSize,
     event::{KeyEvent, WindowEvent},
     event_loop::ActiveEventLoop,
     keyboard::PhysicalKey,
-    dpi::PhysicalSize,
     window::{Window, WindowAttributes, WindowId},
 };
 

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 pltrs_core = { path = "../pltrs_core" }
+pltrs_text = { package = "pltrs-text", path = "../pltrs_text" }
 winit = "0.30"
 wgpu = "0.20"
 env_logger = "0.11"

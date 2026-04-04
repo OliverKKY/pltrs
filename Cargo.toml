@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "crates/pltrs_core",
+  "crates/pltrs_text",
   "crates/pltrs_backend_wgpu",
   "crates/pltrs_python",
 ]

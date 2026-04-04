@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pltrs_backend_wgpu::run_with_figure;
 use pltrs_core::{
     scale::Scale,
-    scene::{Axes, Line, Node, Rect},
+    scene::{Axes, Line, Node, Rect, Text},
     Color, Figure, Size,
 };
 
@@ -38,14 +38,17 @@ impl PyLine {
     ///     RGB color as `(r, g, b)` with values in `[0, 1]`. Defaults to blue.
     /// width : float, optional
     ///     Line width in pixels. Defaults to `2.0`.
+    /// annotations : list[tuple(float, float, str)], optional
+    ///     Text labels given as `(x, y, label)` in data coordinates.
     #[new]
-    #[pyo3(signature = (data, *, x=None, y=None, color=None, width=None))]
+    #[pyo3(signature = (data, *, x=None, y=None, color=None, width=None, annotations=None))]
     fn new(
         data: &Bound<'_, PyAny>,
         x: Option<(f64, f64)>,
         y: Option<(f64, f64)>,
         color: Option<(f32, f32, f32)>,
         width: Option<f32>,
+        annotations: Option<Vec<(f64, f64, String)>>,
     ) -> PyResult<Self> {
         let (xs, ys) = parse_data(data)?;
 
@@ -80,6 +83,17 @@ impl PyLine {
             width: line_width,
         };
         ax.add(Node::Line(line));
+
+        for (x, y, content) in annotations.unwrap_or_default() {
+            ax.add(Node::Text(Text {
+                content,
+                x,
+                y,
+                color: Color::BLACK,
+                size: 18.0,
+            }));
+        }
+
         fig.add_axes(ax);
 
         // Register for pltrs.show().

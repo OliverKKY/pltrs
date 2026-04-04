@@ -2,6 +2,7 @@ use crate::vertex::{LineVertex, ScatterInstance, ScatterVertex};
 use anyhow::{anyhow, Context};
 use bytemuck::{Pod, Zeroable};
 use pltrs_core::{Color, Figure, RenderBackend};
+use pltrs_text::TextRenderer;
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::{event_loop::ActiveEventLoop, keyboard::KeyCode, window::Window};
@@ -32,6 +33,7 @@ pub struct WgpuBackend {
     line_bind_group_layout: wgpu::BindGroupLayout,
     scatter_pipeline: wgpu::RenderPipeline,
     scatter_bind_group_layout: wgpu::BindGroupLayout,
+    text_renderer: TextRenderer,
 
     // Frame state
     current_texture: Option<wgpu::SurfaceTexture>,
@@ -206,6 +208,8 @@ impl WgpuBackend {
             multiview: None,
         });
 
+        let text_renderer = TextRenderer::new(&device, size.width, size.height, config.format)?;
+
         let backend = Self {
             window,
             device,
@@ -219,6 +223,7 @@ impl WgpuBackend {
             line_bind_group_layout,
             scatter_pipeline,
             scatter_bind_group_layout,
+            text_renderer,
             current_texture: None,
             current_view: None,
             current_encoder: None,
@@ -301,12 +306,19 @@ impl RenderBackend for WgpuBackend {
     }
 
     fn draw_scene(&mut self, fig: &Figure) {
+        let batches = pltrs_core::build_batches(fig);
+        self.text_renderer.queue(
+            &self.device,
+            &self.queue,
+            self.size.width,
+            self.size.height,
+            &batches.texts,
+        );
+
         let (view, encoder) = match (&self.current_view, &mut self.current_encoder) {
             (Some(v), Some(e)) => (v, e),
             _ => return,
         };
-
-        let batches = pltrs_core::build_batches(fig);
 
         // Process line batches
         for line_batch in &batches.lines {
@@ -514,6 +526,9 @@ impl RenderBackend for WgpuBackend {
                 }
             }
         }
+
+        self.text_renderer
+            .draw(encoder, view, !batches.texts.is_empty());
     }
 
     fn end_frame(&mut self) {
@@ -536,6 +551,7 @@ impl RenderBackend for WgpuBackend {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+            self.text_renderer.resize(width, height, &self.queue);
             // self.is_surface_configured = true;
         }
         self.size = winit::dpi::PhysicalSize { width, height };

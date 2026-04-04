@@ -48,7 +48,8 @@ pub struct ScatterInstance {
 }
 
 impl ScatterInstance {
-    pub const ATTRIBS: [wgpu::VertexAttribute; 4] = vertex_attr_array![1 => Float32x2, 2 => Float32x4, 3 => Float32, 4 => Uint32];
+    pub const ATTRIBS: [wgpu::VertexAttribute; 4] =
+        vertex_attr_array![1 => Float32x2, 2 => Float32x4, 3 => Float32, 4 => Uint32];
 
     pub fn desc() -> wgpu::VertexBufferLayout<'static> {
         wgpu::VertexBufferLayout {

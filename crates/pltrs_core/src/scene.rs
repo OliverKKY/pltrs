@@ -100,7 +100,7 @@ pub enum Node {
     Line(Line),
     Scatter(Scatter),
     Bar(Bar),
-    // Text(Text) // TODO
+    Text(Text),
 }
 
 #[derive(Clone, Debug)]
@@ -132,4 +132,13 @@ pub struct Bar {
     pub heights: Vec<f64>,
     pub width: f32,
     pub color: Color,
+}
+
+#[derive(Clone, Debug)]
+pub struct Text {
+    pub content: String,
+    pub x: f64,
+    pub y: f64,
+    pub color: Color,
+    pub size: f32,
 }

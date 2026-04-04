@@ -4,7 +4,7 @@ use pyo3::prelude::*;
 use pltrs_backend_wgpu::run_with_figure;
 use pltrs_core::{
     scale::Scale,
-    scene::{Axes, Marker, Node, Rect, Scatter},
+    scene::{Axes, Marker, Node, Rect, Scatter, Text},
     Color, Figure, Size,
 };
 
@@ -40,8 +40,10 @@ impl PyScatter {
     ///     Marker size in pixels. Defaults to `15.0`.
     /// marker : str, optional
     ///     Marker shape: `"circle"` (default) or `"square"`.
+    /// annotations : list[tuple(float, float, str)], optional
+    ///     Text labels given as `(x, y, label)` in data coordinates.
     #[new]
-    #[pyo3(signature = (data, *, x=None, y=None, color=None, size=None, marker=None))]
+    #[pyo3(signature = (data, *, x=None, y=None, color=None, size=None, marker=None, annotations=None))]
     fn new(
         data: &Bound<'_, PyAny>,
         x: Option<(f64, f64)>,
@@ -49,6 +51,7 @@ impl PyScatter {
         color: Option<(f32, f32, f32)>,
         size: Option<f32>,
         marker: Option<&str>,
+        annotations: Option<Vec<(f64, f64, String)>>,
     ) -> PyResult<Self> {
         let (xs, ys) = parse_data(data)?;
 
@@ -88,16 +91,22 @@ impl PyScatter {
         let scatter = Scatter {
             xs,
             ys,
-            color: Color {
-                r,
-                g,
-                b,
-                a: 0.9,
-            },
+            color: Color { r, g, b, a: 0.9 },
             size: marker_size,
             marker: marker_shape,
         };
         ax.add(Node::Scatter(scatter));
+
+        for (x, y, content) in annotations.unwrap_or_default() {
+            ax.add(Node::Text(Text {
+                content,
+                x,
+                y,
+                color: Color::BLACK,
+                size: 18.0,
+            }));
+        }
+
         fig.add_axes(ax);
 
         // Register for pltrs.show().
@@ -109,7 +118,6 @@ impl PyScatter {
     /// Render this figure in a window.
     fn show(&self) -> PyResult<()> {
         let fig = take_registered_figure(self.id).unwrap_or_else(|| self.figure.clone());
-        run_with_figure(Some(fig))
-            .map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        run_with_figure(Some(fig)).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 }
