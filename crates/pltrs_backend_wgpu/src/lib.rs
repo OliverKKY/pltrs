@@ -1,4 +1,5 @@
 use pltrs_core::Figure;
+use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
 mod app;
@@ -20,4 +21,9 @@ pub fn run_with_figure(fig: Option<Figure>) -> anyhow::Result<()> {
         return Err(anyhow::anyhow!(err));
     }
     Ok(())
+}
+
+pub fn save_figure_png(fig: &Figure, path: impl AsRef<Path>) -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    pollster::block_on(backend::save_figure_png(fig, path.as_ref()))
 }

@@ -191,6 +191,7 @@ fn pltrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
 mod tests {
     use super::*;
     use pltrs_core::Size;
+    use pyo3::types::IntoPyDict;
 
     #[test]
     fn take_registered_figure_consumes_only_matching_entry() {
@@ -219,5 +220,34 @@ mod tests {
         let remaining = drain_registered_figures();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].size.width, 2);
+    }
+
+    #[test]
+    fn drain_registered_figures_preserves_multi_series_line_figure() {
+        Python::attach(|py| {
+            let module = PyModule::new(py, "pltrs_test").unwrap();
+            module.add_class::<line::PyLine>().unwrap();
+
+            let locals = [("pltrs_test", module)].into_py_dict(py).unwrap();
+            py.run(
+                pyo3::ffi::c_str!(
+                    r#"
+fig = pltrs_test.Line(
+    [[0.0, 1.0, 0.5], [1.0, 0.25, 0.75]],
+    color=[(0.1, 0.2, 0.8), (0.8, 0.2, 0.1)],
+    width=[2.0, 4.0],
+)
+"#
+                ),
+                None,
+                Some(&locals),
+            )
+            .unwrap();
+
+            let figures = drain_registered_figures();
+            assert_eq!(figures.len(), 1);
+            assert_eq!(figures[0].axes.len(), 1);
+            assert_eq!(figures[0].axes[0].children.len(), 2);
+        });
     }
 }

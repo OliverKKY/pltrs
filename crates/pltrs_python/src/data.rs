@@ -2,6 +2,12 @@ use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyIterator;
 
+#[derive(Debug, Clone)]
+pub struct SeriesData {
+    pub xs: Vec<f64>,
+    pub ys: Vec<f64>,
+}
+
 /// Parse a Python object into separate x and y vectors.
 ///
 /// Accepted formats:
@@ -46,6 +52,102 @@ pub fn parse_data(obj: &Bound<'_, PyAny>) -> PyResult<(Vec<f64>, Vec<f64>)> {
     Ok((xs, ys))
 }
 
+/// Parse either a single data series or an iterable of data series.
+///
+/// Accepted multi-series formats:
+/// - `[[1, 2, 3], [3, 2, 1]]`
+/// - `[[(0, 1), (1, 2)], [(0, 2), (1, 1)]]`
+pub fn parse_series_collection(obj: &Bound<'_, PyAny>) -> PyResult<Vec<SeriesData>> {
+    let py = obj.py();
+    let items: Vec<Py<PyAny>> = PyIterator::from_object(obj)
+        .map_err(|_| PyValueError::new_err("data must be an iterable (list, tuple, or array)"))?
+        .map(|item| item.map(Bound::unbind))
+        .collect::<PyResult<_>>()?;
+
+    if items.is_empty() {
+        return Err(PyValueError::new_err("data must not be empty"));
+    }
+
+    match classify_top_level_item(items[0].bind(py))? {
+        TopLevelItem::Scalar | TopLevelItem::PointPair => {
+            let (xs, ys) = parse_series_items(&items, py)?;
+            Ok(vec![SeriesData { xs, ys }])
+        }
+        TopLevelItem::Series => items
+            .iter()
+            .map(|item| {
+                let (xs, ys) = parse_data(item.bind(py))?;
+                Ok(SeriesData { xs, ys })
+            })
+            .collect(),
+    }
+}
+
+pub(crate) fn resolve_numeric_arg(
+    value: Option<&Bound<'_, PyAny>>,
+    series_count: usize,
+    default: f32,
+    name: &str,
+) -> PyResult<Vec<f32>> {
+    match value {
+        None => Ok(vec![default; series_count]),
+        Some(obj) => {
+            if let Ok(single) = obj.extract::<f32>() {
+                return Ok(vec![single; series_count]);
+            }
+
+            let values = PyIterator::from_object(obj)
+                .map_err(|_| PyValueError::new_err(format!("{name} must be a number or iterable of numbers")))?
+                .map(|item| {
+                    item?.extract::<f32>().map_err(|_| {
+                        PyValueError::new_err(format!("{name} values must be numeric"))
+                    })
+                })
+                .collect::<PyResult<Vec<_>>>()?;
+
+            if values.len() != series_count {
+                return Err(PyValueError::new_err(format!(
+                    "{name} expected 1 value or {series_count} values, got {}",
+                    values.len()
+                )));
+            }
+
+            Ok(values)
+        }
+    }
+}
+
+pub(crate) fn try_extract_rgb(obj: &Bound<'_, PyAny>) -> PyResult<Option<(f32, f32, f32)>> {
+    if obj.len().ok() != Some(3) || obj.is_instance_of::<pyo3::types::PyString>() {
+        return Ok(None);
+    }
+
+    Ok(Some(extract_rgb(obj)?))
+}
+
+pub(crate) fn extract_rgb(obj: &Bound<'_, PyAny>) -> PyResult<(f32, f32, f32)> {
+    let r = obj
+        .get_item(0)?
+        .extract::<f32>()
+        .map_err(|_| PyValueError::new_err("color values must be numeric"))?;
+    let g = obj
+        .get_item(1)?
+        .extract::<f32>()
+        .map_err(|_| PyValueError::new_err("color values must be numeric"))?;
+    let b = obj
+        .get_item(2)?
+        .extract::<f32>()
+        .map_err(|_| PyValueError::new_err("color values must be numeric"))?;
+    Ok((r, g, b))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TopLevelItem {
+    Scalar,
+    PointPair,
+    Series,
+}
+
 /// Check whether an element looks like a 2-element sequence (tuple or list).
 fn is_pair(obj: &Bound<'_, PyAny>) -> bool {
     if let Ok(len) = obj.len() {
@@ -55,6 +157,41 @@ fn is_pair(obj: &Bound<'_, PyAny>) -> bool {
         }
     }
     false
+}
+
+fn is_numeric_pair(obj: &Bound<'_, PyAny>) -> bool {
+    is_pair(obj)
+        && obj.get_item(0).and_then(|item| item.extract::<f64>()).is_ok()
+        && obj.get_item(1).and_then(|item| item.extract::<f64>()).is_ok()
+}
+
+fn classify_top_level_item(obj: &Bound<'_, PyAny>) -> PyResult<TopLevelItem> {
+    if obj.extract::<f64>().is_ok() {
+        return Ok(TopLevelItem::Scalar);
+    }
+
+    if is_numeric_pair(obj) {
+        return Ok(TopLevelItem::PointPair);
+    }
+
+    let mut iter = PyIterator::from_object(obj).map_err(|_| {
+        PyValueError::new_err(
+            "data must be a single series or an iterable of series made of numeric values or (x, y) pairs",
+        )
+    })?;
+
+    let Some(first_nested) = iter.next() else {
+        return Err(PyValueError::new_err("series entries must not be empty"));
+    };
+    let first_nested = first_nested?;
+
+    if first_nested.extract::<f64>().is_ok() || is_numeric_pair(&first_nested) {
+        Ok(TopLevelItem::Series)
+    } else {
+        Err(PyValueError::new_err(
+            "series entries must contain numeric values or (x, y) pairs",
+        ))
+    }
 }
 
 /// Extract a `(f64, f64)` pair from a 2-element sequence.
@@ -68,6 +205,34 @@ fn extract_pair(obj: &Bound<'_, PyAny>) -> PyResult<(f64, f64)> {
         .extract()
         .map_err(|_| PyValueError::new_err("pair y-value must be numeric"))?;
     Ok((x, y))
+}
+
+fn parse_series_items(items: &[Py<PyAny>], py: Python<'_>) -> PyResult<(Vec<f64>, Vec<f64>)> {
+    let mut xs = Vec::new();
+    let mut ys = Vec::new();
+    let mut is_2d: Option<bool> = None;
+
+    for (i, item) in items.iter().enumerate() {
+        let item = item.bind(py);
+
+        if is_2d.is_none() {
+            is_2d = Some(is_pair(item));
+        }
+
+        if is_2d == Some(true) {
+            let (x, y) = extract_pair(item)?;
+            xs.push(x);
+            ys.push(y);
+        } else {
+            let y: f64 = item
+                .extract()
+                .map_err(|_| PyValueError::new_err("data elements must be numeric"))?;
+            xs.push(i as f64);
+            ys.push(y);
+        }
+    }
+
+    Ok((xs, ys))
 }
 
 /// Compute `(min, max)` limits from a slice of values, with optional padding.
@@ -92,4 +257,45 @@ pub fn compute_limits(vals: &[f64], padding: f64) -> (f64, f64) {
 
     let pad = range * padding;
     (lo - pad, hi + pad)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pyo3::types::PyList;
+
+    #[test]
+    fn parse_series_collection_accepts_single_series_pairs() {
+        Python::attach(|py| {
+            let data = PyList::new(py, [(0.0, 1.0), (1.0, 3.0)]).unwrap();
+            let series = parse_series_collection(&data.into_any()).unwrap();
+            assert_eq!(series.len(), 1);
+            assert_eq!(series[0].xs, vec![0.0, 1.0]);
+            assert_eq!(series[0].ys, vec![1.0, 3.0]);
+        });
+    }
+
+    #[test]
+    fn parse_series_collection_accepts_multiple_scalar_series() {
+        Python::attach(|py| {
+            let data = PyList::new(py, [vec![1.0, 2.0], vec![3.0, 4.0]]).unwrap();
+            let series = parse_series_collection(&data.into_any()).unwrap();
+            assert_eq!(series.len(), 2);
+            assert_eq!(series[0].xs, vec![0.0, 1.0]);
+            assert_eq!(series[1].ys, vec![3.0, 4.0]);
+        });
+    }
+
+    #[test]
+    fn parse_series_collection_accepts_multiple_pair_series() {
+        Python::attach(|py| {
+            let series_a = PyList::new(py, [(0.0, 1.0), (1.0, 2.0)]).unwrap();
+            let series_b = PyList::new(py, [(0.0, 2.0), (1.0, 1.0)]).unwrap();
+            let data = PyList::new(py, [series_a, series_b]).unwrap();
+            let parsed = parse_series_collection(&data.into_any()).unwrap();
+            assert_eq!(parsed.len(), 2);
+            assert_eq!(parsed[0].ys, vec![1.0, 2.0]);
+            assert_eq!(parsed[1].ys, vec![2.0, 1.0]);
+        });
+    }
 }
