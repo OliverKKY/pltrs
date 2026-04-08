@@ -102,7 +102,8 @@ impl WgpuBackend {
             desired_maximum_frame_latency: 2,
             present_mode: wgpu::PresentMode::AutoVsync,
         };
-        self.surface.configure(&self.resources.device, &surface_config);
+        self.surface
+            .configure(&self.resources.device, &surface_config);
     }
 
     pub fn handle_key(&self, event_loop: &ActiveEventLoop, code: KeyCode, is_pressed: bool) {
@@ -110,6 +111,10 @@ impl WgpuBackend {
             (KeyCode::Escape, true) => event_loop.exit(),
             _ => {}
         }
+    }
+
+    pub fn request_redraw(&self) {
+        self.window.request_redraw();
     }
 }
 
@@ -193,7 +198,9 @@ pub async fn save_figure_png(fig: &Figure, path: &Path) -> anyhow::Result<()> {
     }
 
     if fig.size.width == 0 || fig.size.height == 0 {
-        return Err(anyhow!("figure size must be non-zero for offscreen rendering"));
+        return Err(anyhow!(
+            "figure size must be non-zero for offscreen rendering"
+        ));
     }
 
     let size = winit::dpi::PhysicalSize::new(fig.size.width, fig.size.height);
@@ -285,7 +292,9 @@ pub async fn save_figure_png(fig: &Figure, path: &Path) -> anyhow::Result<()> {
     let mut encoder = png::Encoder::new(writer, size.width, size.height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    let mut png_writer = encoder.write_header().context("failed to write PNG header")?;
+    let mut png_writer = encoder
+        .write_header()
+        .context("failed to write PNG header")?;
     png_writer
         .write_image_data(&pixels)
         .context("failed to encode PNG image data")?;
@@ -324,19 +333,20 @@ fn build_render_resources(
 ) -> anyhow::Result<RenderResources> {
     let line_shader = device.create_shader_module(wgpu::include_wgsl!("line_shader.wgsl"));
 
-    let line_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("Line Bind Group Layout"),
-        entries: &[wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        }],
-    });
+    let line_bind_group_layout =
+        device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Line Bind Group Layout"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
 
     let line_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: Some("Line Pipeline Layout"),
@@ -514,6 +524,10 @@ fn draw_figure(
     fig: &Figure,
 ) {
     let batches = pltrs_core::build_batches(fig);
+    let plot_scissor = fig
+        .axes
+        .first()
+        .and_then(|axes| scissor_rect_for_axes(axes.rect, resources.size));
     resources.text_renderer.queue(
         &resources.device,
         &resources.queue,
@@ -571,63 +585,55 @@ fn draw_figure(
             continue;
         }
 
-        let vertex_buffer = resources
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Line Vertex Buffer"),
-                contents: bytemuck::cast_slice(&vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-
-        let uniforms = LineUniforms {
-            color: [
-                line_batch.color.r,
-                line_batch.color.g,
-                line_batch.color.b,
-                line_batch.color.a,
-            ],
-            _padding: [0.0; 4],
-        };
-
-        let uniform_buffer =
+        let vertex_buffer =
             resources
                 .device
                 .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                    label: Some("Line Uniform Buffer"),
-                    contents: bytemuck::bytes_of(&uniforms),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                    label: Some("Line Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
                 });
 
-        let bind_group = resources
-            .device
-            .create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Line Bind Group"),
-                layout: &resources.line_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
-            });
+        draw_solid_triangles(
+            resources,
+            encoder,
+            view,
+            &vertex_buffer,
+            vertices.len() as u32,
+            line_batch.color,
+            plot_scissor,
+            "Line Draw Pass",
+            "Line Uniform Buffer",
+            "Line Bind Group",
+        );
+    }
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Line Draw Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
+    for solid_batch in &batches.solids {
+        if solid_batch.vertices.is_empty() {
+            continue;
+        }
 
-        rpass.set_pipeline(&resources.line_pipeline);
-        rpass.set_bind_group(0, &bind_group, &[]);
-        rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
-        rpass.draw(0..vertices.len() as u32, 0..1);
+        let vertex_buffer =
+            resources
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Solid Vertex Buffer"),
+                    contents: bytemuck::cast_slice(&solid_batch.vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
+
+        draw_solid_triangles(
+            resources,
+            encoder,
+            view,
+            &vertex_buffer,
+            solid_batch.vertices.len() as u32,
+            solid_batch.color,
+            plot_scissor,
+            "Solid Draw Pass",
+            "Solid Uniform Buffer",
+            "Solid Bind Group",
+        );
     }
 
     if !batches.markers.is_empty() {
@@ -669,13 +675,14 @@ fn draw_figure(
             },
         ];
 
-        let vertex_buffer = resources
-            .device
-            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("Scatter Quad Buffer"),
-                contents: bytemuck::cast_slice(&strip_vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
+        let vertex_buffer =
+            resources
+                .device
+                .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    label: Some("Scatter Quad Buffer"),
+                    contents: bytemuck::cast_slice(&strip_vertices),
+                    usage: wgpu::BufferUsages::VERTEX,
+                });
 
         for batch in &batches.markers {
             let instances: Vec<ScatterInstance> = batch
@@ -717,6 +724,9 @@ fn draw_figure(
             });
 
             rpass.set_pipeline(&resources.scatter_pipeline);
+            if let Some((x, y, width, height)) = plot_scissor {
+                rpass.set_scissor_rect(x, y, width, height);
+            }
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
             rpass.set_vertex_buffer(1, instance_buffer.slice(..));
@@ -727,6 +737,88 @@ fn draw_figure(
     resources
         .text_renderer
         .draw(encoder, view, !batches.texts.is_empty());
+}
+
+fn draw_solid_triangles(
+    resources: &RenderResources,
+    encoder: &mut wgpu::CommandEncoder,
+    view: &wgpu::TextureView,
+    vertex_buffer: &wgpu::Buffer,
+    vertex_count: u32,
+    color: Color,
+    scissor_rect: Option<(u32, u32, u32, u32)>,
+    pass_label: &str,
+    uniform_label: &str,
+    bind_group_label: &str,
+) {
+    let uniforms = LineUniforms {
+        color: [color.r, color.g, color.b, color.a],
+        _padding: [0.0; 4],
+    };
+
+    let uniform_buffer = resources
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some(uniform_label),
+            contents: bytemuck::bytes_of(&uniforms),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+    let bind_group = resources
+        .device
+        .create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some(bind_group_label),
+            layout: &resources.line_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+        });
+
+    let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(pass_label),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+    });
+
+    rpass.set_pipeline(&resources.line_pipeline);
+    if let Some((x, y, width, height)) = scissor_rect {
+        rpass.set_scissor_rect(x, y, width, height);
+    }
+    rpass.set_bind_group(0, &bind_group, &[]);
+    rpass.set_vertex_buffer(0, vertex_buffer.slice(..));
+    rpass.draw(0..vertex_count, 0..1);
+}
+
+fn scissor_rect_for_axes(
+    rect: pltrs_core::Rect,
+    size: winit::dpi::PhysicalSize<u32>,
+) -> Option<(u32, u32, u32, u32)> {
+    if size.width == 0 || size.height == 0 {
+        return None;
+    }
+
+    let x = (rect.x.clamp(0.0, 1.0) * size.width as f32).floor() as u32;
+    let y_top = ((1.0 - (rect.y + rect.h).clamp(0.0, 1.0)) * size.height as f32).floor() as u32;
+    let x_end = ((rect.x + rect.w).clamp(0.0, 1.0) * size.width as f32).ceil() as u32;
+    let y_end = ((1.0 - rect.y.clamp(0.0, 1.0)) * size.height as f32).ceil() as u32;
+
+    let width = x_end.saturating_sub(x);
+    let height = y_end.saturating_sub(y_top);
+    if width == 0 || height == 0 {
+        None
+    } else {
+        Some((x, y_top, width, height))
+    }
 }
 
 fn padded_bytes_per_row(unpadded_bytes_per_row: u32) -> u32 {

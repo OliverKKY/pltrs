@@ -47,13 +47,20 @@ pub struct TextBatch {
     pub size: f32,
 }
 
+/// A batch of filled triangles to be rendered in a single solid color.
+#[derive(Debug)]
+pub struct SolidBatch {
+    pub vertices: Vec<[f32; 2]>,
+    pub color: Color,
+}
+
 /// Collection of renderable batches.
 #[derive(Debug, Default)]
 pub struct Batches {
     pub lines: Vec<LineBatch>,
     pub markers: Vec<MarkerBatch>,
     pub texts: Vec<TextBatch>,
-    // pub bars: Vec<BarBatch>,       // TODO
+    pub solids: Vec<SolidBatch>,
 }
 
 /// Build renderable batches from the Scene Graph.
@@ -104,8 +111,36 @@ pub fn build_batches(fig: &Figure) -> Batches {
                         marker: scatter.marker,
                     });
                 }
-                Node::Bar(_) => {
-                    // TODO
+                Node::Bar(bar) => {
+                    let mut vertices = Vec::with_capacity(bar.xs.len() * 6);
+                    for (&x, &height) in bar.xs.iter().zip(&bar.heights) {
+                        let x0_norm_axes = axes.x.map(x - bar.width as f64 * 0.5) as f32;
+                        let x1_norm_axes = axes.x.map(x + bar.width as f64 * 0.5) as f32;
+                        let y0_norm_axes = axes.y.map(0.0) as f32;
+                        let y1_norm_axes = axes.y.map(height) as f32;
+
+                        let left = axes_rect.x + axes_rect.w * x0_norm_axes;
+                        let right = axes_rect.x + axes_rect.w * x1_norm_axes;
+                        let bottom = axes_rect.y + axes_rect.h * y0_norm_axes;
+                        let top = axes_rect.y + axes_rect.h * y1_norm_axes;
+
+                        let min_y = bottom.min(top);
+                        let max_y = bottom.max(top);
+
+                        vertices.extend_from_slice(&[
+                            [left, min_y],
+                            [right, min_y],
+                            [right, max_y],
+                            [left, min_y],
+                            [right, max_y],
+                            [left, max_y],
+                        ]);
+                    }
+
+                    batches.solids.push(SolidBatch {
+                        vertices,
+                        color: bar.color,
+                    });
                 }
                 Node::Text(text) => {
                     let x_norm_axes = axes.x.map(text.x) as f32;

@@ -1,25 +1,35 @@
+use std::path::PathBuf;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
 
-use pltrs_backend_wgpu::run_with_figure;
+use pltrs_backend_wgpu::{run_with_figure, run_with_plot};
 use pltrs_core::{
+    plot::PlotDefinition,
     scale::Scale,
     scene::{Axes, Line, Node, Rect},
     Color, Figure, Size,
 };
 use pyo3::prelude::*;
 
+mod bar;
 mod data;
 mod line;
+mod plot;
 mod scatter;
 
 /// Global registry of figures created by `Line(...)`, `Scatter(...)`, etc.
 /// Calling `pltrs.show()` renders all of them in sequence and clears the registry.
+#[derive(Clone)]
+pub enum PlotHandle {
+    Figure(Figure),
+    Plot(PlotDefinition),
+}
+
 pub struct RegisteredFigure {
     pub id: u64,
-    pub figure: Figure,
+    pub handle: PlotHandle,
 }
 
 pub static FIGURE_REGISTRY: Mutex<Vec<RegisteredFigure>> = Mutex::new(Vec::new());
@@ -29,20 +39,36 @@ pub fn next_figure_id() -> u64 {
     NEXT_FIGURE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
-pub fn register_figure(id: u64, figure: Figure) {
+pub fn register_handle(id: u64, handle: PlotHandle) {
     let mut reg = FIGURE_REGISTRY.lock().unwrap();
-    reg.push(RegisteredFigure { id, figure });
+    reg.push(RegisteredFigure { id, handle });
 }
 
-pub fn take_registered_figure(id: u64) -> Option<Figure> {
+pub fn take_registered_handle(id: u64) -> Option<PlotHandle> {
     let mut reg = FIGURE_REGISTRY.lock().unwrap();
     let idx = reg.iter().position(|entry| entry.id == id)?;
-    Some(reg.swap_remove(idx).figure)
+    Some(reg.swap_remove(idx).handle)
 }
 
-pub fn drain_registered_figures() -> Vec<Figure> {
+pub fn drain_registered_handles() -> Vec<PlotHandle> {
     let mut reg = FIGURE_REGISTRY.lock().unwrap();
-    reg.drain(..).map(|entry| entry.figure).collect()
+    reg.drain(..).map(|entry| entry.handle).collect()
+}
+
+pub fn resolve_output_path(path: &str) -> PathBuf {
+    if path == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(path));
+    }
+
+    if let Some(stripped) = path.strip_prefix("~/") {
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home).join(stripped);
+        }
+    }
+
+    PathBuf::from(path)
 }
 
 /// Render all queued figures in sequence, then clear the registry.
@@ -51,7 +77,7 @@ pub fn drain_registered_figures() -> Vec<Figure> {
 /// Escape) to proceed to the next figure.
 #[pyfunction]
 fn show() -> PyResult<()> {
-    let figures = drain_registered_figures();
+    let figures = drain_registered_handles();
 
     if figures.is_empty() {
         // Nothing queued — open an empty window (original behaviour).
@@ -60,8 +86,12 @@ fn show() -> PyResult<()> {
     }
 
     for fig in figures {
-        run_with_figure(Some(fig))
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))?;
+        match fig {
+            PlotHandle::Figure(fig) => run_with_figure(Some(fig))
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))?,
+            PlotHandle::Plot(plot) => run_with_plot(plot)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))?,
+        }
     }
     Ok(())
 }
@@ -175,6 +205,7 @@ fn demo_scatter() -> PyResult<()> {
 #[pymodule]
 fn pltrs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // New API classes
+    m.add_class::<bar::PyBar>()?;
     m.add_class::<line::PyLine>()?;
     m.add_class::<scatter::PyScatter>()?;
 
@@ -197,35 +228,42 @@ mod tests {
     fn take_registered_figure_consumes_only_matching_entry() {
         let id_a = next_figure_id();
         let id_b = next_figure_id();
-        register_figure(
+        register_handle(
             id_a,
-            Figure::new(Size {
+            PlotHandle::Figure(Figure::new(Size {
                 width: 1,
                 height: 1,
                 dpi: 1.0,
-            }),
+            })),
         );
-        register_figure(
+        register_handle(
             id_b,
-            Figure::new(Size {
+            PlotHandle::Figure(Figure::new(Size {
                 width: 2,
                 height: 2,
                 dpi: 1.0,
-            }),
+            })),
         );
 
-        let taken = take_registered_figure(id_a).unwrap();
-        assert_eq!(taken.size.width, 1);
+        let taken = take_registered_handle(id_a).unwrap();
+        match taken {
+            PlotHandle::Figure(fig) => assert_eq!(fig.size.width, 1),
+            PlotHandle::Plot(_) => panic!("expected a static figure"),
+        }
 
-        let remaining = drain_registered_figures();
+        let remaining = drain_registered_handles();
         assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].size.width, 2);
+        match &remaining[0] {
+            PlotHandle::Figure(fig) => assert_eq!(fig.size.width, 2),
+            PlotHandle::Plot(_) => panic!("expected a static figure"),
+        }
     }
 
     #[test]
     fn drain_registered_figures_preserves_multi_series_line_figure() {
         Python::attach(|py| {
             let module = PyModule::new(py, "pltrs_test").unwrap();
+            module.add_class::<bar::PyBar>().unwrap();
             module.add_class::<line::PyLine>().unwrap();
 
             let locals = [("pltrs_test", module)].into_py_dict(py).unwrap();
@@ -236,6 +274,9 @@ fig = pltrs_test.Line(
     [[0.0, 1.0, 0.5], [1.0, 0.25, 0.75]],
     color=[(0.1, 0.2, 0.8), (0.8, 0.2, 0.1)],
     width=[2.0, 4.0],
+    title="Multi-series",
+    x_label="sample",
+    y_label="value",
 )
 "#
                 ),
@@ -244,10 +285,63 @@ fig = pltrs_test.Line(
             )
             .unwrap();
 
-            let figures = drain_registered_figures();
+            let figures = drain_registered_handles();
             assert_eq!(figures.len(), 1);
-            assert_eq!(figures[0].axes.len(), 1);
-            assert_eq!(figures[0].axes[0].children.len(), 2);
+            match &figures[0] {
+                PlotHandle::Plot(plot) => {
+                    let fig = plot.build_figure(&plot.initial_view());
+                    assert_eq!(fig.axes.len(), 2);
+                    assert!(fig.axes[0].children.len() >= 2);
+                    assert!(
+                        fig.axes[1]
+                            .children
+                            .iter()
+                            .any(|node| matches!(node, pltrs_core::Node::Text(text) if text.content == "Multi-series"))
+                    );
+                }
+                PlotHandle::Figure(_) => panic!("expected an interactive plot"),
+            }
+        });
+    }
+
+    #[test]
+    fn bar_registers_bar_nodes_for_multiple_series() {
+        Python::attach(|py| {
+            let module = PyModule::new(py, "pltrs_test").unwrap();
+            module.add_class::<bar::PyBar>().unwrap();
+
+            let locals = [("pltrs_test", module)].into_py_dict(py).unwrap();
+            py.run(
+                pyo3::ffi::c_str!(
+                    r#"
+fig = pltrs_test.Bar(
+    [[1.0, 2.0, 3.0], [1.5, 1.0, 2.5]],
+    title="Bars",
+    x_label="category",
+    y_label="value",
+)
+"#
+                ),
+                None,
+                Some(&locals),
+            )
+            .unwrap();
+
+            let figures = drain_registered_handles();
+            assert_eq!(figures.len(), 1);
+            match &figures[0] {
+                PlotHandle::Plot(plot) => {
+                    let fig = plot.build_figure(&plot.initial_view());
+                    assert_eq!(fig.axes.len(), 2);
+                    let bar_count = fig.axes[0]
+                        .children
+                        .iter()
+                        .filter(|node| matches!(node, pltrs_core::Node::Bar(_)))
+                        .count();
+                    assert_eq!(bar_count, 2);
+                }
+                PlotHandle::Figure(_) => panic!("expected an interactive plot"),
+            }
         });
     }
 }

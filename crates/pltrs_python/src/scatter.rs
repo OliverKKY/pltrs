@@ -2,17 +2,16 @@ use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyIterator;
 
-use pltrs_backend_wgpu::{run_with_figure, save_figure_png};
-use pltrs_core::{
-    scale::Scale,
-    scene::{Axes, Marker, Node, Rect, Scatter, Text},
-    Color, Figure, Size,
-};
+use pltrs_backend_wgpu::{run_with_plot, save_figure_png};
+use pltrs_core::{plot::PlotDefinition, scene::Marker, Color};
 
 use crate::data::{
     compute_limits, extract_rgb, parse_series_collection, resolve_numeric_arg, try_extract_rgb,
 };
-use crate::{next_figure_id, register_figure, take_registered_figure};
+use crate::plot::{build_plot_definition, scatter_series, PlotOptions};
+use crate::{
+    next_figure_id, register_handle, resolve_output_path, take_registered_handle, PlotHandle,
+};
 
 /// A lazy scatter-plot descriptor.
 ///
@@ -21,7 +20,7 @@ use crate::{next_figure_id, register_figure, take_registered_figure};
 #[pyclass(name = "Scatter")]
 pub struct PyScatter {
     id: u64,
-    figure: Figure,
+    plot: PlotDefinition,
 }
 
 #[pymethods]
@@ -45,8 +44,12 @@ impl PyScatter {
     ///     One marker shape or one per series.
     /// annotations : list[tuple(float, float, str)], optional
     ///     Text labels given as `(x, y, label)` in data coordinates.
+    /// title, x_label, y_label : str, optional
+    ///     Plot title and axis labels.
+    /// grid : bool, optional
+    ///     Draw background grid lines and labeled axes. Enabled by default.
     #[new]
-    #[pyo3(signature = (data, *, x=None, y=None, color=None, size=None, marker=None, annotations=None))]
+    #[pyo3(signature = (data, *, x=None, y=None, color=None, size=None, marker=None, annotations=None, title=None, x_label=None, y_label=None, grid=true))]
     fn new(
         data: &Bound<'_, PyAny>,
         x: Option<(f64, f64)>,
@@ -55,10 +58,20 @@ impl PyScatter {
         size: Option<&Bound<'_, PyAny>>,
         marker: Option<&Bound<'_, PyAny>>,
         annotations: Option<Vec<(f64, f64, String)>>,
+        title: Option<String>,
+        x_label: Option<String>,
+        y_label: Option<String>,
+        grid: bool,
     ) -> PyResult<Self> {
         let series = parse_series_collection(data)?;
-        let all_xs: Vec<f64> = series.iter().flat_map(|series| series.xs.iter().copied()).collect();
-        let all_ys: Vec<f64> = series.iter().flat_map(|series| series.ys.iter().copied()).collect();
+        let all_xs: Vec<f64> = series
+            .iter()
+            .flat_map(|series| series.xs.iter().copied())
+            .collect();
+        let all_ys: Vec<f64> = series
+            .iter()
+            .flat_map(|series| series.ys.iter().copied())
+            .collect();
 
         let xlim = x.unwrap_or_else(|| compute_limits(&all_xs, 0.05));
         let ylim = y.unwrap_or_else(|| compute_limits(&all_ys, 0.05));
@@ -68,64 +81,58 @@ impl PyScatter {
         let markers = resolve_markers(marker, series.len())?;
         let id = next_figure_id();
 
-        // Build a single-axes figure.
-        let fig_size = Size {
-            width: 800,
-            height: 600,
-            dpi: 1.0,
-        };
-        let mut fig = Figure::new(fig_size);
-        let rect = Rect {
-            x: 0.1,
-            y: 0.1,
-            w: 0.8,
-            h: 0.8,
-        };
-        let xscale = Scale::linear(xlim, (0.0, 1.0));
-        let yscale = Scale::linear(ylim, (0.0, 1.0));
-        let mut ax = Axes::new(rect, xscale, yscale);
+        let plot = build_plot_definition(
+            PlotOptions {
+                xlim,
+                ylim,
+                annotations: annotations.unwrap_or_default(),
+                title,
+                x_label,
+                y_label,
+                grid,
+            },
+            series
+                .into_iter()
+                .zip(colors)
+                .zip(sizes)
+                .zip(markers)
+                .map(|(((series, (r, g, b)), marker_size), marker_shape)| {
+                    scatter_series(
+                        series.xs,
+                        series.ys,
+                        Color { r, g, b, a: 0.9 },
+                        marker_size,
+                        marker_shape,
+                    )
+                })
+                .collect(),
+        );
 
-        for (((series, (r, g, b)), marker_size), marker_shape) in
-            series.into_iter().zip(colors).zip(sizes).zip(markers)
-        {
-            let scatter = Scatter {
-                xs: series.xs,
-                ys: series.ys,
-                color: Color { r, g, b, a: 0.9 },
-                size: marker_size,
-                marker: marker_shape,
-            };
-            ax.add(Node::Scatter(scatter));
-        }
+        register_handle(id, PlotHandle::Plot(plot.clone()));
 
-        for (x, y, content) in annotations.unwrap_or_default() {
-            ax.add(Node::Text(Text {
-                content,
-                x,
-                y,
-                color: Color::BLACK,
-                size: 18.0,
-            }));
-        }
-
-        fig.add_axes(ax);
-
-        // Register for pltrs.show().
-        register_figure(id, fig.clone());
-
-        Ok(Self { id, figure: fig })
+        Ok(Self { id, plot })
     }
 
     /// Render this figure in a window.
     fn show(&self) -> PyResult<()> {
-        let fig = take_registered_figure(self.id).unwrap_or_else(|| self.figure.clone());
-        run_with_figure(Some(fig)).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        let plot = match take_registered_handle(self.id) {
+            Some(PlotHandle::Plot(plot)) => plot,
+            Some(PlotHandle::Figure(_)) => self.plot.clone(),
+            None => self.plot.clone(),
+        };
+        run_with_plot(plot).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 
     /// Render this figure offscreen and save it as a PNG.
     fn save(&self, path: &str) -> PyResult<()> {
-        let fig = take_registered_figure(self.id).unwrap_or_else(|| self.figure.clone());
-        save_figure_png(&fig, path).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        let plot = match take_registered_handle(self.id) {
+            Some(PlotHandle::Plot(plot)) => plot,
+            Some(PlotHandle::Figure(_)) => self.plot.clone(),
+            None => self.plot.clone(),
+        };
+        let fig = plot.build_figure(&plot.initial_view());
+        let output_path = resolve_output_path(path);
+        save_figure_png(&fig, &output_path).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 }
 
@@ -151,7 +158,9 @@ fn resolve_scatter_colors(
             }
 
             let colors = PyIterator::from_object(obj)
-                .map_err(|_| PyRuntimeError::new_err("color must be an RGB tuple or iterable of RGB tuples"))?
+                .map_err(|_| {
+                    PyRuntimeError::new_err("color must be an RGB tuple or iterable of RGB tuples")
+                })?
                 .map(|item| item.and_then(|item| extract_rgb(&item)))
                 .collect::<PyResult<Vec<_>>>()?;
 
@@ -167,7 +176,10 @@ fn resolve_scatter_colors(
     }
 }
 
-fn resolve_markers(marker: Option<&Bound<'_, PyAny>>, series_count: usize) -> PyResult<Vec<Marker>> {
+fn resolve_markers(
+    marker: Option<&Bound<'_, PyAny>>,
+    series_count: usize,
+) -> PyResult<Vec<Marker>> {
     match marker {
         None => Ok(vec![Marker::Circle; series_count]),
         Some(obj) => {
@@ -177,7 +189,9 @@ fn resolve_markers(marker: Option<&Bound<'_, PyAny>>, series_count: usize) -> Py
             }
 
             let markers = PyIterator::from_object(obj)
-                .map_err(|_| PyValueError::new_err("marker must be a string or iterable of strings"))?
+                .map_err(|_| {
+                    PyValueError::new_err("marker must be a string or iterable of strings")
+                })?
                 .map(|item| {
                     let marker = item?
                         .extract::<String>()

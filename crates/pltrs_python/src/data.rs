@@ -97,7 +97,9 @@ pub(crate) fn resolve_numeric_arg(
             }
 
             let values = PyIterator::from_object(obj)
-                .map_err(|_| PyValueError::new_err(format!("{name} must be a number or iterable of numbers")))?
+                .map_err(|_| {
+                    PyValueError::new_err(format!("{name} must be a number or iterable of numbers"))
+                })?
                 .map(|item| {
                     item?.extract::<f32>().map_err(|_| {
                         PyValueError::new_err(format!("{name} values must be numeric"))
@@ -161,8 +163,14 @@ fn is_pair(obj: &Bound<'_, PyAny>) -> bool {
 
 fn is_numeric_pair(obj: &Bound<'_, PyAny>) -> bool {
     is_pair(obj)
-        && obj.get_item(0).and_then(|item| item.extract::<f64>()).is_ok()
-        && obj.get_item(1).and_then(|item| item.extract::<f64>()).is_ok()
+        && obj
+            .get_item(0)
+            .and_then(|item| item.extract::<f64>())
+            .is_ok()
+        && obj
+            .get_item(1)
+            .and_then(|item| item.extract::<f64>())
+            .is_ok()
 }
 
 fn classify_top_level_item(obj: &Bound<'_, PyAny>) -> PyResult<TopLevelItem> {

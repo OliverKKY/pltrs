@@ -1,4 +1,4 @@
-use pltrs_core::Figure;
+use pltrs_core::{Figure, PlotDefinition};
 use std::path::Path;
 use winit::event_loop::{ControlFlow, EventLoop};
 
@@ -16,6 +16,19 @@ pub fn run_with_figure(fig: Option<Figure>) -> anyhow::Result<()> {
     event_loop.set_control_flow(ControlFlow::Poll);
 
     let mut app = App::new(fig);
+    event_loop.run_app(&mut app)?;
+    if let Some(err) = app.init_error.take() {
+        return Err(anyhow::anyhow!(err));
+    }
+    Ok(())
+}
+
+pub fn run_with_plot(plot: PlotDefinition) -> anyhow::Result<()> {
+    let _ = env_logger::try_init();
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
+
+    let mut app = App::new_interactive(plot);
     event_loop.run_app(&mut app)?;
     if let Some(err) = app.init_error.take() {
         return Err(anyhow::anyhow!(err));

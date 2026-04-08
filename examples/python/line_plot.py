@@ -14,6 +14,10 @@ fig = pltrs.Line(
     [series_a, series_b],
     color=[(0.1, 0.2, 0.8), (0.85, 0.25, 0.2)],
     width=[9.0, 6.0],
-    annotations=annotations,
+    # annotations=annotations,
+    title="Sine and Cosine",
+    x_label="x",
+    y_label="value",
+    grid=True,
 )
 fig.show()
