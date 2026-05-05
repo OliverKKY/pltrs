@@ -1515,6 +1515,7 @@ dependencies = [
  "pltrs_core",
  "png",
  "pollster",
+ "pyo3",
  "wgpu",
  "winit",
 ]

@@ -1,16 +1,17 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Mutex,
 };
 
-use pltrs_backend_wgpu::{run_with_figure, run_with_plot};
+use pltrs_backend_wgpu::{run_with_figure, run_with_plot, KEYBOARD_INTERRUPT_ERROR};
 use pltrs_core::{
     plot::PlotDefinition,
     scale::Scale,
     scene::{Axes, Line, Node, Rect},
     Color, Figure, Size,
 };
+use pyo3::exceptions::PyRuntimeError;
 use pyo3::prelude::*;
 
 mod bar;
@@ -55,7 +56,7 @@ pub fn drain_registered_handles() -> Vec<PlotHandle> {
     reg.drain(..).map(|entry| entry.handle).collect()
 }
 
-pub fn resolve_output_path(path: &str) -> PathBuf {
+fn expand_output_path(path: &str) -> PathBuf {
     if path == "~" {
         return std::env::var_os("HOME")
             .map(PathBuf::from)
@@ -71,6 +72,62 @@ pub fn resolve_output_path(path: &str) -> PathBuf {
     PathBuf::from(path)
 }
 
+fn fallback_output_filename(script_path: Option<&Path>) -> PathBuf {
+    script_path
+        .and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(|stem| PathBuf::from(format!("{stem}.png")))
+        .unwrap_or_else(|| PathBuf::from("plot.png"))
+}
+
+fn resolve_output_path_from_base(
+    path: Option<&str>,
+    script_path: Option<&Path>,
+    cwd: &Path,
+) -> PathBuf {
+    let base_dir = script_path
+        .and_then(|path| path.parent())
+        .unwrap_or(cwd);
+    let requested = path.and_then(|value| {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then_some(trimmed)
+    });
+    let expanded = requested
+        .map(expand_output_path)
+        .unwrap_or_else(|| fallback_output_filename(script_path));
+
+    if expanded.is_absolute() {
+        expanded
+    } else {
+        base_dir.join(expanded)
+    }
+}
+
+pub fn resolve_output_path(py: Python<'_>, path: Option<&str>) -> PyResult<PathBuf> {
+    let script_path = py
+        .import("__main__")?
+        .getattr("__file__")
+        .ok()
+        .and_then(|value| value.extract::<String>().ok())
+        .map(PathBuf::from);
+    let cwd = std::env::current_dir()
+        .map_err(|err| PyRuntimeError::new_err(format!("failed to resolve current directory: {err}")))?;
+
+    Ok(resolve_output_path_from_base(
+        path,
+        script_path.as_deref(),
+        &cwd,
+    ))
+}
+
+pub fn map_backend_error(err: anyhow::Error) -> PyErr {
+    if err.to_string() == KEYBOARD_INTERRUPT_ERROR {
+        PyErr::new::<pyo3::exceptions::PyKeyboardInterrupt, _>("")
+    } else {
+        PyErr::new::<PyRuntimeError, _>(format!("{err}"))
+    }
+}
+
 /// Render all queued figures in sequence, then clear the registry.
 ///
 /// Each figure is displayed in its own window. Close the window (or press
@@ -81,16 +138,13 @@ fn show() -> PyResult<()> {
 
     if figures.is_empty() {
         // Nothing queued — open an empty window (original behaviour).
-        return run_with_figure(None)
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")));
+        return run_with_figure(None).map_err(map_backend_error);
     }
 
     for fig in figures {
         match fig {
-            PlotHandle::Figure(fig) => run_with_figure(Some(fig))
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))?,
-            PlotHandle::Plot(plot) => run_with_plot(plot)
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))?,
+            PlotHandle::Figure(fig) => run_with_figure(Some(fig)).map_err(map_backend_error)?,
+            PlotHandle::Plot(plot) => run_with_plot(plot).map_err(map_backend_error)?,
         }
     }
     Ok(())
@@ -135,8 +189,7 @@ fn demo_line() -> PyResult<()> {
     ax.add(Node::Line(line));
     fig.add_axes(ax);
 
-    run_with_figure(Some(fig))
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))
+    run_with_figure(Some(fig)).map_err(map_backend_error)
 }
 
 #[pyfunction]
@@ -194,8 +247,7 @@ fn demo_scatter() -> PyResult<()> {
 
     fig.add_axes(ax);
 
-    run_with_figure(Some(fig))
-        .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("{e}")))
+    run_with_figure(Some(fig)).map_err(map_backend_error)
 }
 
 // ---------------------------------------------------------------------------
@@ -223,6 +275,7 @@ mod tests {
     use super::*;
     use pltrs_core::Size;
     use pyo3::types::IntoPyDict;
+    use std::path::Path;
 
     #[test]
     fn take_registered_figure_consumes_only_matching_entry() {
@@ -343,5 +396,34 @@ fig = pltrs_test.Bar(
                 PlotHandle::Figure(_) => panic!("expected an interactive plot"),
             }
         });
+    }
+
+    #[test]
+    fn resolve_output_path_uses_script_directory_for_relative_targets() {
+        let resolved = resolve_output_path_from_base(
+            Some("out.png"),
+            Some(Path::new("/tmp/project/charts/demo.py")),
+            Path::new("/tmp/ignored"),
+        );
+
+        assert_eq!(resolved, PathBuf::from("/tmp/project/charts/out.png"));
+    }
+
+    #[test]
+    fn resolve_output_path_defaults_to_script_stem_png() {
+        let resolved = resolve_output_path_from_base(
+            None,
+            Some(Path::new("/tmp/project/charts/demo.py")),
+            Path::new("/tmp/ignored"),
+        );
+
+        assert_eq!(resolved, PathBuf::from("/tmp/project/charts/demo.png"));
+    }
+
+    #[test]
+    fn resolve_output_path_falls_back_to_cwd_without_script_file() {
+        let resolved = resolve_output_path_from_base(None, None, Path::new("/tmp/current"));
+
+        assert_eq!(resolved, PathBuf::from("/tmp/current/plot.png"));
     }
 }

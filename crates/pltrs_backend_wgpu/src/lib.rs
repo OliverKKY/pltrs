@@ -9,6 +9,8 @@ mod vertex;
 pub use app::App;
 pub use backend::WgpuBackend;
 
+pub const KEYBOARD_INTERRUPT_ERROR: &str = "__pltrs_keyboard_interrupt__";
+
 /// Public entry: run a simple loop with an optional scene.
 pub fn run_with_figure(fig: Option<Figure>) -> anyhow::Result<()> {
     let _ = env_logger::try_init();

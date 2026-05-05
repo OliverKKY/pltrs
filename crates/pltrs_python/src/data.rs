@@ -124,6 +124,13 @@ pub(crate) fn try_extract_rgb(obj: &Bound<'_, PyAny>) -> PyResult<Option<(f32, f
         return Ok(None);
     }
 
+    let first = obj.get_item(0)?;
+    let second = obj.get_item(1)?;
+    let third = obj.get_item(2)?;
+    if first.extract::<f32>().is_err() || second.extract::<f32>().is_err() || third.extract::<f32>().is_err() {
+        return Ok(None);
+    }
+
     Ok(Some(extract_rgb(obj)?))
 }
 

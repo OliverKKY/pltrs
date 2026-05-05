@@ -10,7 +10,8 @@ use crate::data::{
 };
 use crate::plot::{bar_series, build_plot_definition, PlotOptions};
 use crate::{
-    next_figure_id, register_handle, resolve_output_path, take_registered_handle, PlotHandle,
+    map_backend_error, next_figure_id, register_handle, resolve_output_path,
+    take_registered_handle, PlotHandle,
 };
 
 #[pyclass(name = "Bar")]
@@ -91,17 +92,18 @@ impl PyBar {
             Some(PlotHandle::Figure(_)) => self.plot.clone(),
             None => self.plot.clone(),
         };
-        run_with_plot(plot).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
+        run_with_plot(plot).map_err(map_backend_error)
     }
 
-    fn save(&self, path: &str) -> PyResult<()> {
+    #[pyo3(signature = (path=None))]
+    fn save(&self, py: Python<'_>, path: Option<&str>) -> PyResult<()> {
         let plot = match take_registered_handle(self.id) {
             Some(PlotHandle::Plot(plot)) => plot,
             Some(PlotHandle::Figure(_)) => self.plot.clone(),
             None => self.plot.clone(),
         };
         let fig = plot.build_figure(&plot.initial_view());
-        let output_path = resolve_output_path(path);
+        let output_path = resolve_output_path(py, path)?;
         save_figure_png(&fig, &output_path).map_err(|e| PyRuntimeError::new_err(format!("{e}")))
     }
 }

@@ -6,18 +6,19 @@ import pltrs
 series_a = [(i / 10.0, math.sin(i / 10.0)) for i in range(100)]
 series_b = [(i / 10.0, math.cos(i / 10.0)) for i in range(100)]
 annotations = [
-    (math.pi / 2.0, 1.0, "text"),
-    (3.0 * math.pi / 2.0, -1.0, "trough"),
+    ((math.pi / 2.0) + 0.5, 1.0, "sin(x)"),
+    ((3.0 * math.pi / 2.0) + 0.7, 1.0, "cos(x)"),
 ]
 
 fig = pltrs.Line(
     [series_a, series_b],
     color=[(0.1, 0.2, 0.8), (0.85, 0.25, 0.2)],
     width=[9.0, 6.0],
-    # annotations=annotations,
-    title="Sine and Cosine",
+    annotations=annotations,
+    title="Spojnicový graf",
     x_label="x",
-    y_label="value",
+    y_label="y",
     grid=True,
 )
 fig.show()
+fig.save("line_plot.png")

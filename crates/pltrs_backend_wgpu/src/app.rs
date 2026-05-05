@@ -1,5 +1,6 @@
-use crate::backend::WgpuBackend;
+use crate::{backend::WgpuBackend, KEYBOARD_INTERRUPT_ERROR};
 use pltrs_core::{Color, Figure, PlotDefinition, PlotView, RenderBackend};
+use pyo3::{ffi, Python};
 use std::{env, sync::Arc, time::Instant};
 use winit::{
     application::ApplicationHandler,
@@ -77,7 +78,7 @@ impl App {
     }
 
     fn window_attributes(&self) -> WindowAttributes {
-        let mut attrs = Window::default_attributes();
+        let mut attrs = Window::default_attributes().with_title("pltrs plot");
         match &self.content {
             AppContent::Static(Some(fig)) => {
                 attrs = attrs.with_inner_size(PhysicalSize::new(fig.size.width, fig.size.height));
@@ -186,6 +187,14 @@ impl App {
         self.middle_drag = None;
         true
     }
+
+    fn exit_if_interrupted(&mut self, event_loop: &ActiveEventLoop) {
+        let interrupted = Python::attach(|_| unsafe { ffi::PyErr_CheckSignals() != 0 });
+        if interrupted {
+            self.init_error = Some(KEYBOARD_INTERRUPT_ERROR.to_string());
+            event_loop.exit();
+        }
+    }
 }
 
 impl ApplicationHandler for App {
@@ -281,6 +290,10 @@ impl ApplicationHandler for App {
             }
             _ => {}
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.exit_if_interrupted(event_loop);
     }
 }
 
