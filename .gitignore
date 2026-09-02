@@ -42,6 +42,9 @@ htmlcov/
 nosetests.xml
 coverage.xml
 
+# Generated images from examples
+examples/**/*.png
+
 # Translations
 *.mo
 
